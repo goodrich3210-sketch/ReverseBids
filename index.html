@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ReverseBids.net — Trading Desk</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  /* ---- Design tokens: maritime reverse-auction trading desk ----
+     Navy #1F3864 (structure)  ·  Teal #1F7A7A (action)  ·  Gold #BF9000 (the winning/best price)
+     Type: Tahoma family per house style. Gold is reserved ONLY for the leading bid —
+     the one memorable signal on a screen full of falling prices. */
+  :root{
+    --navy:#1F3864; --navy-700:#162a4b; --teal:#1F7A7A; --teal-600:#1a6868;
+    --gold:#BF9000; --gold-soft:#f4e9c8;
+    --ink:#16202e; --muted:#5b6b7e; --line:#dfe5ec; --bg:#f3f5f8; --card:#ffffff;
+    --good:#1f7a4d; --bad:#b3261e; --radius:10px;
+    --mono:"Consolas","SF Mono",ui-monospace,monospace;
+    --sans:Tahoma,Verdana,Segoe UI,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:var(--sans);color:var(--ink);background:var(--bg);font-size:14px;line-height:1.45}
+  a{color:var(--teal);text-decoration:none}
+  button{font-family:inherit;cursor:pointer}
+  .hidden{display:none!important}
+
+  /* App shell */
+  header.topbar{background:var(--navy);color:#fff;display:flex;align-items:center;gap:14px;
+    padding:10px 18px;position:sticky;top:0;z-index:30}
+  .brand{display:flex;align-items:center;gap:9px;font-weight:700;letter-spacing:.2px}
+  .brand .mark{width:22px;height:22px;border-radius:4px;background:
+    linear-gradient(135deg,var(--teal),var(--gold));display:inline-block}
+  .brand small{font-weight:400;opacity:.7;font-size:11px;display:block;letter-spacing:.04em}
+  .topbar .spacer{flex:1}
+  .role-pill{background:rgba(255,255,255,.12);padding:4px 10px;border-radius:999px;font-size:12px;text-transform:capitalize}
+  .icon-btn{background:transparent;border:0;color:#fff;font-size:18px;position:relative;padding:4px 6px}
+  .badge{position:absolute;top:-2px;right:-2px;background:var(--gold);color:#1a1a1a;border-radius:999px;
+    font-size:10px;min-width:16px;height:16px;display:grid;place-items:center;padding:0 3px;font-weight:700}
+  .logout{background:rgba(255,255,255,.14);border:0;color:#fff;padding:6px 12px;border-radius:7px;font-size:13px}
+
+  .layout{display:flex;min-height:calc(100vh - 44px)}
+  nav.side{width:208px;background:#fff;border-right:1px solid var(--line);padding:14px 10px;flex-shrink:0}
+  nav.side button{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:transparent;
+    border:0;padding:10px 12px;border-radius:8px;color:var(--muted);font-size:14px;font-weight:600}
+  nav.side button.active{background:var(--navy);color:#fff}
+  nav.side button:hover:not(.active){background:#eef2f7;color:var(--navy)}
+  main{flex:1;padding:22px;max-width:1100px;width:100%}
+
+  h1.view-title{font-size:20px;margin:0 0 2px;color:var(--navy)}
+  .view-sub{color:var(--muted);margin:0 0 18px;font-size:13px}
+
+  /* KPI cards */
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:20px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px}
+  .kpi .label{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.05em}
+  .kpi .value{font-size:26px;font-weight:700;color:var(--navy);font-family:var(--mono)}
+  .kpi.accent .value{color:var(--gold)}
+
+  /* Cards & tables */
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:18px;margin-bottom:18px}
+  .card h2{font-size:15px;margin:0 0 14px;color:var(--navy);display:flex;align-items:center;gap:8px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{text-align:left;color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;
+    letter-spacing:.04em;padding:8px 10px;border-bottom:2px solid var(--line)}
+  td{padding:10px;border-bottom:1px solid var(--line);vertical-align:middle}
+  tbody tr:nth-child(even){background:#fafcfe}
+  td.num,th.num{text-align:right;font-family:var(--mono)}
+  .tag{font-size:11px;padding:3px 8px;border-radius:999px;font-weight:600;text-transform:capitalize}
+  .tag.live{background:#e4f6ee;color:var(--good)} .tag.draft{background:#eef2f7;color:var(--muted)}
+  .tag.awarded{background:var(--gold-soft);color:var(--gold)} .tag.winning{background:var(--gold-soft);color:var(--gold)}
+  .tag.outbid{background:#fdeceb;color:var(--bad)} .tag.active{background:#e4f6ee;color:var(--good)}
+  .lead-row{position:relative}
+  .lead-row td:first-child{border-left:3px solid var(--gold)}
+
+  /* Forms */
+  label.fld{display:block;margin-bottom:12px}
+  label.fld span{display:block;font-size:12px;color:var(--muted);margin-bottom:4px;font-weight:600}
+  input,select{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:8px;font-family:inherit;font-size:14px}
+  input:focus,select:focus{outline:2px solid var(--teal);border-color:var(--teal)}
+  .row{display:flex;gap:12px;flex-wrap:wrap}.row>*{flex:1;min-width:120px}
+  .btn{background:var(--teal);color:#fff;border:0;padding:10px 18px;border-radius:8px;font-weight:600;font-size:14px}
+  .btn:hover{background:var(--teal-600)} .btn.ghost{background:#fff;color:var(--navy);border:1px solid var(--line)}
+  .btn.gold{background:var(--gold);color:#1a1a1a} .btn:disabled{opacity:.5;cursor:not-allowed}
+  .help{font-size:12px;color:var(--muted);margin-top:-6px;margin-bottom:12px}
+  .msg{padding:10px 12px;border-radius:8px;font-size:13px;margin-bottom:12px}
+  .msg.err{background:#fdeceb;color:var(--bad)} .msg.ok{background:#e4f6ee;color:var(--good)}
+
+  /* Login */
+  .login-wrap{min-height:100vh;display:grid;place-items:center;background:
+    radial-gradient(1200px 500px at 50% -10%,#27406e,var(--navy))}
+  .login-card{background:#fff;border-radius:14px;padding:30px;width:340px;box-shadow:0 18px 50px rgba(0,0,0,.3)}
+  .login-card .brand{color:var(--navy);font-size:20px;margin-bottom:4px}
+  .login-card .tagline{color:var(--muted);font-size:13px;margin:0 0 20px}
+  .seg{display:flex;background:#eef2f7;border-radius:8px;padding:3px;margin-bottom:14px}
+  .seg button{flex:1;border:0;background:transparent;padding:8px;border-radius:6px;font-weight:600;color:var(--muted);font-size:13px}
+  .seg button.active{background:#fff;color:var(--navy);box-shadow:0 1px 3px rgba(0,0,0,.1)}
+
+  .descent{font-family:var(--mono);font-size:12px;color:var(--muted)}
+  .pulse{width:8px;height:8px;border-radius:50%;background:var(--good);display:inline-block;
+    box-shadow:0 0 0 0 rgba(31,122,77,.6);animation:p 1.6s infinite}
+  @keyframes p{70%{box-shadow:0 0 0 8px rgba(31,122,77,0)}100%{box-shadow:0 0 0 0 rgba(31,122,77,0)}}
+
+  /* Mobile */
+  .hamburger{display:none;background:transparent;border:0;color:#fff;font-size:20px}
+  @media (max-width:820px){
+    .hamburger{display:block}
+    nav.side{position:fixed;inset:44px auto 0 0;height:calc(100vh - 44px);transform:translateX(-100%);
+      transition:transform .22s ease;z-index:25;box-shadow:6px 0 24px rgba(0,0,0,.15)}
+    nav.side.open{transform:translateX(0)}
+    main{padding:16px}
+    .brand small{display:none}
+    table{font-size:12px}
+    th,td{padding:8px 6px}
+    .scroll-x{overflow-x:auto}
+  }
+  @media (prefers-reduced-motion:reduce){.pulse{animation:none}nav.side{transition:none}}
+</style>
+</head>
+<body>
+
+<!-- ============================ LOGIN ============================ -->
+<div id="login" class="login-wrap">
+  <div class="login-card">
+    <div class="brand"><span class="mark"></span> ReverseBids<span style="color:var(--teal)">.net</span></div>
+    <p class="tagline">Lowest qualified bid wins — fishmeal &amp; fish oil.</p>
+    <div id="loginMsg"></div>
+    <div class="seg" id="authSeg">
+      <button data-mode="login" class="active">Sign in</button>
+      <button data-mode="register">Register</button>
+    </div>
+    <div id="regFields" class="hidden">
+      <label class="fld"><span>Full name</span><input id="rFullName" /></label>
+      <label class="fld"><span>Company</span><input id="rCompany" /></label>
+      <label class="fld"><span>I am a</span>
+        <select id="rRole"><option value="buyer">Buyer (procurement)</option>
+        <option value="seller">Seller (supplier)</option></select></label>
+    </div>
+    <label class="fld"><span>Email</span><input id="email" type="email" autocomplete="username" /></label>
+    <label class="fld"><span>Password</span><input id="password" type="password" autocomplete="current-password" /></label>
+    <button class="btn" style="width:100%" id="authBtn">Sign in</button>
+    <p class="help" style="margin-top:14px;text-align:center">
+      Demo admin: admin@reversebids.net · ChangeMe!Admin2026</p>
+  </div>
+</div>
+
+<!-- ============================ APP ============================ -->
+<div id="app" class="hidden">
+  <header class="topbar">
+    <button class="hamburger" id="hamburger">☰</button>
+    <div class="brand"><span class="mark"></span>ReverseBids<span style="color:var(--teal)">.net</span>
+      <small>Reverse Auction Trading Desk</small></div>
+    <div class="spacer"></div>
+    <span class="role-pill" id="rolePill">—</span>
+    <button class="icon-btn" id="bell" title="Notifications">🔔<span class="badge hidden" id="bellBadge">0</span></button>
+    <button class="logout" id="logoutBtn">Sign out</button>
+  </header>
+
+  <div class="layout">
+    <nav class="side" id="sidenav"></nav>
+    <main id="main"></main>
+  </div>
+</div>
+
+<script>
+// ----------------------------------------------------------------------------
+// API client
+// ----------------------------------------------------------------------------
+const API = localStorage.getItem("rb_api") || "http://localhost:8000";
+let TOKEN = localStorage.getItem("rb_token") || null;
+let ME = null;
+
+async function api(path, {method="GET", body=null, raw=false}={}){
+  const headers = {"Content-Type":"application/json"};
+  if (TOKEN) headers["Authorization"] = `Bearer ${TOKEN}`;
+  const res = await fetch(API+path, {method, headers, body: body?JSON.stringify(body):null});
+  if (res.status === 401){ doLogout(); throw new Error("Session expired. Please sign in again."); }
+  if (raw) return res.text();
+  const data = await res.json().catch(()=>({}));
+  if (!res.ok) throw new Error(data.detail || `Request failed (${res.status})`);
+  return data;
+}
+const fmt = n => (n==null?"—":Number(n).toLocaleString("en-IN",{maximumFractionDigits:2}));
+
+// ----------------------------------------------------------------------------
+// Auth UI
+// ----------------------------------------------------------------------------
+let authMode = "login";
+document.querySelectorAll("#authSeg button").forEach(b=>b.onclick=()=>{
+  authMode=b.dataset.mode;
+  document.querySelectorAll("#authSeg button").forEach(x=>x.classList.toggle("active",x===b));
+  document.getElementById("regFields").classList.toggle("hidden", authMode!=="register");
+  document.getElementById("authBtn").textContent = authMode==="register"?"Create account":"Sign in";
+});
+function loginMsg(t,k="err"){document.getElementById("loginMsg").innerHTML=t?`<div class="msg ${k}">${t}</div>`:"";}
+
+document.getElementById("authBtn").onclick = async ()=>{
+  const email=val("email"), password=val("password");
+  loginMsg("");
+  try{
+    if(authMode==="register"){
+      await api("/auth/register",{method:"POST",body:{
+        email,password,full_name:val("rFullName"),company_name:val("rCompany"),role:val("rRole")}});
+      loginMsg("Account created. Sellers require admin verification before bidding.","ok");
+      authMode="login"; document.querySelector('#authSeg button[data-mode="login"]').click();
+      return;
+    }
+    const t = await api("/auth/login",{method:"POST",body:{email,password}});
+    TOKEN=t.access_token; localStorage.setItem("rb_token",TOKEN);
+    await boot();
+  }catch(e){ loginMsg(e.message); }
+};
+const val = id => document.getElementById(id).value.trim();
+
+function doLogout(){TOKEN=null;ME=null;localStorage.removeItem("rb_token");
+  document.getElementById("app").classList.add("hidden");
+  document.getElementById("login").classList.remove("hidden");}
+document.getElementById("logoutBtn").onclick=doLogout;
+
+// ----------------------------------------------------------------------------
+// Boot + navigation
+// ----------------------------------------------------------------------------
+const NAV = {
+  buyer:  [["dashboard","Dashboard"],["create","New auction"],["myAuctions","My auctions"]],
+  seller: [["dashboard","Dashboard"],["browse","Live auctions"],["myBids","My bids"]],
+  admin:  [["dashboard","Dashboard"],["sellers","Seller approvals"],["audit","Audit trail"]],
+};
+let CURRENT = "dashboard";
+
+async function boot(){
+  ME = await api("/auth/me");
+  document.getElementById("login").classList.add("hidden");
+  document.getElementById("app").classList.remove("hidden");
+  document.getElementById("rolePill").textContent = ME.role;
+  const nav = document.getElementById("sidenav"); nav.innerHTML="";
+  NAV[ME.role].forEach(([k,label])=>{
+    const b=document.createElement("button"); b.textContent=label;
+    b.onclick=()=>{CURRENT=k;render();document.querySelectorAll("#sidenav button")
+      .forEach(x=>x.classList.toggle("active",x===b)); closeNav();};
+    nav.appendChild(b);
+  });
+  nav.firstChild.classList.add("active");
+  CURRENT="dashboard"; render(); loadBell();
+}
+
+document.getElementById("hamburger").onclick=()=>document.getElementById("sidenav").classList.toggle("open");
+function closeNav(){if(window.innerWidth<=820)document.getElementById("sidenav").classList.remove("open");}
+
+async function loadBell(){
+  // Notifications endpoint is illustrative; badge stays hidden if none.
+  try{ /* hook a /notifications endpoint here */ }catch(e){}
+}
+
+// ----------------------------------------------------------------------------
+// Render router
+// ----------------------------------------------------------------------------
+function head(title,sub){return `<h1 class="view-title">${title}</h1><p class="view-sub">${sub}</p>`;}
+function render(){
+  const m=document.getElementById("main"); m.innerHTML=`<p class="view-sub">Loading…</p>`;
+  const fn = {dashboard:viewDashboard,create:viewCreate,myAuctions:viewMyAuctions,
+    browse:viewBrowse,myBids:viewMyBids,sellers:viewSellers,audit:viewAudit}[CURRENT];
+  fn(m).catch(e=>m.innerHTML=`<div class="msg err">${e.message}</div>`);
+}
+
+// ---- Dashboard (all roles) -------------------------------------------------
+async function viewDashboard(m){
+  const ov = await api("/analytics/overview");
+  const dist = await api("/analytics/sku-distribution");
+  const cards = ME.role==="seller"
+    ? [["Live auctions",ov.live_auctions],["Your verification",ME.is_verified?"Verified":"Pending"],
+       ["Qualified bids (all)",ov.qualified_bids]]
+    : [["Live auctions",ov.live_auctions],["Awarded",ov.awarded_auctions],
+       ["Awarded value (₹)",fmt(ov.awarded_value),true],["Verified sellers",`${ov.sellers_verified}/${ov.sellers_total}`]];
+  m.innerHTML = head("Dashboard",`Signed in as ${ME.company_name}`)
+    + `<div class="kpis">${cards.map(([l,v,a])=>
+        `<div class="kpi ${a?'accent':''}"><div class="label">${l}</div><div class="value">${v}</div></div>`).join("")}</div>`
+    + `<div class="card"><h2>Qualified bids by SKU</h2><canvas id="skuChart" height="110"></canvas></div>`;
+  const labels=dist.map(d=>d.sku), vals=dist.map(d=>d.bids);
+  new Chart(document.getElementById("skuChart"),{type:"bar",
+    data:{labels:labels.length?labels:["No bids yet"],datasets:[{data:vals.length?vals:[0],
+      backgroundColor:"#1F7A7A",borderRadius:5}]},
+    options:{plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,ticks:{precision:0}}}}});
+}
+
+// ---- Buyer: create auction -------------------------------------------------
+async function viewCreate(m){
+  const skus = await api("/auctions/skus");
+  m.innerHTML = head("New auction","Only the four locked SKUs are biddable.")
+   + `<div class="card"><div id="cMsg"></div>
+      <label class="fld"><span>Auction title</span><input id="cTitle" placeholder="Q3 Fishmeal Procurement"/></label>
+      <div class="row">
+        <label class="fld"><span>SKU</span><select id="cSku">${skus.map(s=>
+          `<option value="${s.code}">${s.name} — min ${s.spec_value}${s.spec_unit}</option>`).join("")}</select></label>
+        <label class="fld"><span>Quantity (MT)</span><input id="cQty" type="number" value="100"/></label>
+      </div>
+      <div class="row">
+        <label class="fld"><span>Ceiling price ₹/MT</span><input id="cCeil" type="number" value="100000"/></label>
+        <label class="fld"><span>Allocation</span><select id="cSplit">
+          <option value="true">Allow split (pay-as-bid)</option>
+          <option value="false">Winner takes all</option></select></label>
+      </div>
+      <label class="fld"><span>Delivery terms</span><input id="cTerms" placeholder="CIF Chennai, 30 days"/></label>
+      <button class="btn" id="cBtn">Create auction</button></div>`;
+  document.getElementById("cBtn").onclick = async ()=>{
+    try{
+      await api("/auctions",{method:"POST",body:{
+        title:val("cTitle"), delivery_terms:val("cTerms"),
+        lines:[{sku_code:val("cSku"),quantity_mt:+val("cQty"),
+          ceiling_price:+val("cCeil"),allow_split:val("cSplit")==="true"}]}});
+      document.getElementById("cMsg").innerHTML=`<div class="msg ok">Auction created as draft. Open "My auctions" to start it.</div>`;
+    }catch(e){document.getElementById("cMsg").innerHTML=`<div class="msg err">${e.message}</div>`;}
+  };
+}
+
+// ---- Buyer: my auctions ----------------------------------------------------
+async function viewMyAuctions(m){
+  const list = await api("/auctions");
+  m.innerHTML = head("My auctions","Start, monitor the blind leaderboard, then award.")
+    + (list.length? "" : `<div class="card">No auctions yet. Create one to begin.</div>`)
+    + list.map(a=>auctionCard(a)).join("");
+  list.forEach(a=>wireAuctionCard(a));
+}
+function auctionCard(a){
+  const l=a.lines[0];
+  return `<div class="card" id="ac-${a.id}">
+    <h2>${a.reference} — ${a.title} <span class="tag ${a.status}">${a.status}</span></h2>
+    <table><thead><tr><th>SKU</th><th class="num">Qty MT</th><th class="num">Ceiling ₹/MT</th><th>Split</th></tr></thead>
+    <tbody><tr><td>${l.sku_code}</td><td class="num">${fmt(l.quantity_mt)}</td>
+    <td class="num">${fmt(l.ceiling_price)}</td><td>${l.allow_split?"Yes":"No"}</td></tr></tbody></table>
+    <div class="row" style="margin-top:14px">
+      ${a.status==="draft"?`<button class="btn" data-act="start" data-id="${a.id}">Start auction</button>`:""}
+      ${["live","paused","closed"].includes(a.status)?
+        `<button class="btn ghost" data-act="board" data-id="${a.id}" data-line="${l.id}">Refresh leaderboard</button>
+         <button class="btn gold" data-act="award" data-id="${a.id}">Award</button>`:""}
+      ${a.status==="awarded"?`<a class="btn ghost" href="${API}/auctions/${a.id}/indent" target="_blank">Download indent</a>`:""}
+    </div>
+    <div id="board-${a.id}"></div></div>`;
+}
+function wireAuctionCard(a){
+  document.querySelectorAll(`#ac-${a.id} [data-act]`).forEach(btn=>{
+    btn.onclick=async()=>{
+      try{
+        if(btn.dataset.act==="start"){await api(`/auctions/${a.id}/start`,{method:"POST"});}
+        if(btn.dataset.act==="award"){await api(`/auctions/${a.id}/award`,{method:"POST"});}
+        if(btn.dataset.act==="board"){return showBoard(a.id,btn.dataset.line);}
+        render();
+      }catch(e){alert(e.message);}
+    };
+  });
+}
+async function showBoard(aid,lineId){
+  const rows = await api(`/auctions/${aid}/lines/${lineId}/leaderboard`);
+  const el=document.getElementById(`board-${aid}`);
+  if(!rows.length){el.innerHTML=`<p class="descent" style="margin-top:12px">No qualified bids yet.</p>`;return;}
+  el.innerHTML=`<h2 style="margin-top:18px"><span class="pulse"></span> Blind leaderboard — lowest normalised wins</h2>
+    <table><thead><tr><th>Rank</th><th>Bidder</th><th class="num">Normalised ₹/MT</th><th class="num">Qty MT</th><th>Status</th></tr></thead>
+    <tbody>${rows.map(r=>`<tr class="${r.rank===1?'lead-row':''}">
+      <td>#${r.rank}</td><td class="descent">${r.blind_alias}</td>
+      <td class="num">${fmt(r.normalised_price)}</td><td class="num">${fmt(r.quantity_mt)}</td>
+      <td><span class="tag ${r.status}">${r.status}</span></td></tr>`).join("")}</tbody></table>`;
+}
+
+// ---- Seller: browse live ---------------------------------------------------
+async function viewBrowse(m){
+  if(!ME.is_verified){m.innerHTML=head("Live auctions","")+
+    `<div class="msg err">Your seller account is pending verification. An admin must approve you before you can bid.</div>`;return;}
+  const list = await api("/auctions");
+  const skus = await api("/auctions/skus");
+  const skuMap=Object.fromEntries(skus.map(s=>[s.code,s]));
+  m.innerHTML = head("Live auctions","Submit your price and offered spec. Prices are protein-normalised for fair ranking.")
+    + (list.length?"":`<div class="card">No live auctions right now.</div>`)
+    + list.map(a=>{const l=a.lines[0];const s=skuMap[l.sku_code];
+      return `<div class="card" id="bid-${l.id}">
+        <h2>${a.reference} — ${a.title} <span class="tag ${a.status}">${a.status}</span></h2>
+        <p class="descent">${s.name} · ceiling ₹${fmt(l.ceiling_price)}/MT · need ${fmt(l.quantity_mt)} MT</p>
+        <div id="bm-${l.id}"></div>
+        <div class="row">
+          <label class="fld"><span>Your price ₹/MT</span><input type="number" id="p-${l.id}" value="${l.ceiling_price}"/></label>
+          <label class="fld"><span>Offered ${s.spec_unit}</span><input type="number" id="s-${l.id}" value="${s.spec_value}"/></label>
+          <label class="fld"><span>Qty you can supply MT</span><input type="number" id="q-${l.id}" value="${l.quantity_mt}"/></label>
+        </div>
+        <button class="btn" data-line="${l.id}">Submit bid</button></div>`;}).join("");
+  m.querySelectorAll("[data-line]").forEach(btn=>btn.onclick=async()=>{
+    const lid=btn.dataset.line;
+    try{
+      const r=await api("/bids",{method:"POST",body:{line_id:lid,price:+val("p-"+lid),
+        offered_spec:+val("s-"+lid),quantity_mt:+val("q-"+lid)}});
+      document.getElementById("bm-"+lid).innerHTML=
+        `<div class="msg ok">Bid accepted. Normalised to ₹${fmt(r.normalised_price)}/MT.</div>`;
+    }catch(e){document.getElementById("bm-"+lid).innerHTML=`<div class="msg err">${e.message}</div>`;}
+  });
+}
+
+// ---- Seller: my bids -------------------------------------------------------
+async function viewMyBids(m){
+  const bids = await api("/bids/mine");
+  m.innerHTML = head("My bids","Your full bid history with normalised pricing.")
+   + `<div class="card scroll-x"><table>
+      <thead><tr><th>Price ₹/MT</th><th class="num">Offered spec</th><th class="num">Normalised ₹/MT</th>
+      <th class="num">Qty MT</th><th>Status</th></tr></thead><tbody>
+      ${bids.length?bids.map(b=>`<tr class="${b.status==='winning'?'lead-row':''}">
+        <td class="num">${fmt(b.price)}</td><td class="num">${fmt(b.offered_spec)}</td>
+        <td class="num">${fmt(b.normalised_price)}</td><td class="num">${fmt(b.quantity_mt)}</td>
+        <td><span class="tag ${b.status}">${b.status}</span></td></tr>`).join("")
+        :`<tr><td colspan="5">No bids yet.</td></tr>`}</tbody></table></div>`;
+}
+
+// ---- Admin: sellers --------------------------------------------------------
+async function viewSellers(m){
+  const sellers = await api("/admin/users?role=seller");
+  m.innerHTML = head("Seller approvals","Verify suppliers before they can place qualified bids.")
+   + `<div class="card scroll-x"><table>
+      <thead><tr><th>Company</th><th>Contact</th><th>Alias</th><th>Status</th><th></th></tr></thead><tbody>
+      ${sellers.length?sellers.map(s=>`<tr>
+        <td>${s.company_name}</td><td>${s.full_name}<br><span class="descent">${s.email}</span></td>
+        <td class="descent">${s.blind_alias||"—"}</td>
+        <td><span class="tag ${s.is_verified?'active':'outbid'}">${s.is_verified?'verified':'pending'}</span></td>
+        <td>${s.is_verified?"":`<button class="btn" data-verify="${s.id}">Verify</button>`}</td></tr>`).join("")
+        :`<tr><td colspan="5">No sellers registered.</td></tr>`}</tbody></table></div>`;
+  m.querySelectorAll("[data-verify]").forEach(b=>b.onclick=async()=>{
+    try{await api(`/admin/users/${b.dataset.verify}/verify`,{method:"POST"});render();}
+    catch(e){alert(e.message);}});
+}
+
+// ---- Admin: audit ----------------------------------------------------------
+async function viewAudit(m){
+  const rows = await api("/admin/audit?limit=100");
+  m.innerHTML = head("Audit trail","Append-only record of every significant action.")
+   + `<div class="card scroll-x"><table>
+      <thead><tr><th>When</th><th>Action</th><th>Role</th><th>Entity</th><th>IP</th></tr></thead><tbody>
+      ${rows.map(r=>`<tr><td class="descent">${new Date(r.created_at).toLocaleString()}</td>
+      <td><code>${r.action}</code></td><td>${r.actor_role||"—"}</td>
+      <td class="descent">${r.entity_type}${r.entity_id?(" · "+r.entity_id.slice(0,8)):""}</td>
+      <td class="descent">${r.ip||"—"}</td></tr>`).join("")}</tbody></table></div>`;
+}
+
+// ----------------------------------------------------------------------------
+if (TOKEN) boot().catch(()=>doLogout());
+</script>
+</body>
+</html>
